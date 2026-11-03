@@ -1,0 +1,41 @@
+models:
+  - id: canary_1b_v2
+    family: nemo
+    role: quality_first
+    enabled: true
+    backend: nemo
+    model_name: nvidia/canary-1b-v2
+    mode: streaming_or_chunked
+    notes:
+      - strongest current multilingual/code-switch candidate
+
+  - id: parakeet_tdt_0_6b_v3
+    family: nemo
+    role: latency_first
+    enabled: true
+    backend: nemo
+    model_name: nvidia/parakeet-tdt-0.6b-v3
+    mode: streaming
+    notes:
+      - likely fastest serious multilingual candidate
+      - verify code-switch weakness empirically
+
+  - id: whisper_large_v3_turbo_fw
+    family: whisper
+    role: baseline
+    enabled: true
+    backend: faster_whisper
+    model_name: large-v3-turbo
+    multilingual: true
+    vad: silero
+    notes:
+      - robust community baseline
+
+  - id: whisper_cpp_optional
+    family: whisper
+    role: native_baseline
+    enabled: false
+    backend: whisper_cpp
+    model_name: large-v3-turbo_or_large-v3
+    notes:
+      - optional native reference

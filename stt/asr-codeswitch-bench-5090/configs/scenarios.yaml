@@ -1,0 +1,15 @@
+scenarios:
+  mixes: [en_pl, en_ru, ru_pl, en_ru_pl]
+  densities: [low, medium, high]
+  durations: [short, medium, long]
+  conditions: [clean, noise_light, reverb_light]
+
+latency_targets:
+  ttfp_ms_max: 500
+  ttsc_ms_max: 1500
+  finalization_lag_ms_max: 2000
+
+reporting:
+  include_partial_traces: true
+  include_vram_trace: true
+  include_failure_examples: true

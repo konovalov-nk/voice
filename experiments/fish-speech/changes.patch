@@ -1,0 +1,959 @@
+diff --git a/Makefile b/Makefile
+index d28ed2d..c915bbd 100644
+--- a/Makefile
++++ b/Makefile
+@@ -5,15 +5,19 @@ PORT ?= 8080
+ CONTAINER ?= fish-speech
+ BASE_URL ?= http://127.0.0.1:$(PORT)
+ 
+-.PHONY: run-server stop-server e2e e2e-memory preencode preencode-upload upload-references test help
++.PHONY: run-server stop-server e2e e2e-memory e2e-vram-log plot-vram preencode preencode-upload upload-references test help
+ 
+ help:
+ 	@echo "Fish Speech 32GB server and E2E"
+ 	@echo "  make run-server        - Start API server in Docker (COMPILE=0)"
+ 	@echo "  make run-server COMPILE=1 - Start with torch.compile (warmup 2-10 min)"
++	@echo "  make run-server VRAM_STEPS=1 - Log VRAM at each pipeline step (vram_step)"
++	@echo "  make run-server HALF=1 - Use fp16 instead of bf16 (GPUs without bf16)"
+ 	@echo "  make stop-server       - Stop container"
+ 	@echo "  make e2e               - E2E smoke (server must be up)"
+ 	@echo "  make e2e-memory        - E2E memory (2 TTS requests)"
++	@echo "  make e2e-vram-log      - Restart with COMPILE+VRAM_STEPS, warmup, e2e×2, save logs"
++	@echo "  make plot-vram [LOG_DIR=results/e2e_vram_*] - Table + HTML chart from vram_steps"
+ 	@echo "  make preencode         - Pre-encode WAV+txt to references/"
+ 	@echo "  make preencode-upload  - Pre-encode and upload to server"
+ 	@echo "  make upload-references - Upload existing references/ only"
+@@ -21,7 +25,7 @@ help:
+ 	@echo "Override: PORT=8080 PREENCODE_CHECKPOINT=../../checkpoints/s2-pro/codec.pth"
+ 
+ run-server:
+-	WORKSPACE_DIR="$(WORKSPACE_DIR)" CHECKPOINTS_DIR="$(CHECKPOINTS_DIR)" PORT="$(PORT)" COMPILE="$(COMPILE)" ./scripts/run_server_32gb.sh
++	WORKSPACE_DIR="$(WORKSPACE_DIR)" CHECKPOINTS_DIR="$(CHECKPOINTS_DIR)" PORT="$(PORT)" COMPILE="$(COMPILE)" VRAM_STEPS="$(VRAM_STEPS)" HALF="$(HALF)" ./scripts/run_server_32gb.sh
+ 
+ stop-server:
+ 	docker rm -f $(CONTAINER) 2>/dev/null || true
+@@ -32,6 +36,19 @@ e2e:
+ e2e-memory:
+ 	PORT="$(PORT)" BASE_URL="$(BASE_URL)" ./scripts/e2e_memory.sh
+ 
++# Restart server with COMPILE=1 + VRAM_STEPS=1, wait warmup, run e2e twice, save all logs to results/e2e_vram_*
++e2e-vram-log:
++	./scripts/e2e_vram_log.sh
++
++# Build VRAM table + HTML chart from vram_steps_full.txt (default: latest results/e2e_vram_*)
++plot-vram:
++	@LOG_DIR="$(LOG_DIR)"; \
++	if [[ -z "$$LOG_DIR" ]]; then for d in results/e2e_vram_*/; do [ -d "$$d" ] && LOG_DIR="$$d"; done; fi; \
++	if [[ -z "$$LOG_DIR" ]] || [[ ! -d "$$LOG_DIR" ]]; then echo "No LOG_DIR. Run make e2e-vram-log or set LOG_DIR=results/e2e_vram_YYYYMMDD_HHMMSS"; exit 1; fi; \
++	F="$$LOG_DIR/vram_steps_full.txt"; \
++	if [[ ! -f "$$F" ]]; then echo "Missing $$F"; exit 1; fi; \
++	uv run python scripts/plot_vram_steps.py "$$F" -o "$$LOG_DIR/vram_steps_chart.html"
++
+ preencode:
+ 	PREENCODE_INPUT_DIR="$(PREENCODE_INPUT_DIR)" PREENCODE_OUTPUT_DIR="$(PREENCODE_OUTPUT_DIR)" \
+ 	PREENCODE_CHECKPOINT="$(PREENCODE_CHECKPOINT)" PREENCODE_REF_ID="$(PREENCODE_REF_ID)" \
+diff --git a/docs/docker-32gb-rtx5090.md b/docs/docker-32gb-rtx5090.md
+index f5f3f95..2ca9241 100644
+--- a/docs/docker-32gb-rtx5090.md
++++ b/docs/docker-32gb-rtx5090.md
+@@ -71,6 +71,67 @@ curl -s http://127.0.0.1:8080/v1/health
+ - `PYTHONPATH=/workspace` — so the container uses the mounted repo (e.g. your branch).
+ - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` — reduces fragmentation.
+ 
++**Step-by-step VRAM logging:** set `FISH_LOG_VRAM_STEPS=1` (e.g. in `docker run -e FISH_LOG_VRAM_STEPS=1`) to log `vram_step` at each pipeline stage (inference_start, ref_loaded, llama_queued, segment_decode_start/done, generate_long_start, after_prefill, after_first_stream_chunk, generate_long_done, inference_done). Grep logs for `vram_step` to see alloc_gb/max_gb per step and check if peak reaches 30+ GB.
++
++## Prometheus & Grafana
++
++The server exposes **Prometheus** metrics at **GET /metrics** (no auth). Use Prometheus to scrape this endpoint and Grafana to visualize.
++
++**Metrics:**
++
++| Metric | Type | Description |
++|--------|------|-------------|
++| `fish_speech_vram_allocated_gb` | Gauge | GPU memory allocated (GB) at last observation |
++| `fish_speech_vram_max_gb` | Gauge | Max GPU memory allocated (GB) since process start |
++| `fish_speech_tts_requests_total{streaming}` | Counter | Total TTS requests (streaming=true/false) |
++| `fish_speech_tts_request_duration_seconds{streaming}` | Histogram | Request duration |
++| `fish_speech_tts_ttfa_seconds{streaming}` | Histogram | Time to first audio segment (excl. WAV header) |
++| `fish_speech_prefill_seconds` | Histogram | Prefill (first token) duration |
++| `fish_speech_decode_one_token_seconds` | Histogram | Single-token decode duration |
++| `fish_speech_decode_n_tokens_seconds` | Histogram | Full decode_n_tokens duration (non-streaming path) |
++| `fish_speech_forward_fast_seconds` | Histogram | forward_generate_fast (one codebook) duration |
++| `fish_speech_model_params_gb{component}` | Gauge | Static weights (GB): llm_slow, llm_fast, dac |
++| `fish_speech_func_vram_delta_gb{func}` | Gauge | VRAM net change (GB) during last call (prefill, decode_n_tokens, dac_decode) |
++| `fish_speech_func_vram_peak_gb{func}` | Gauge | VRAM peak (GB) during last call |
++| `fish_speech_func_vram_intermediate_gb{func,point}` | Gauge | VRAM (GB) at intermediate point (e.g. decode_one_token_ar: after_slow_forward, after_fast_forward; dac: after_quantizer, after_decoder), running max per chunk |
++
++Values are updated at each pipeline step when `FISH_LOG_VRAM_STEPS=1`, and on every call to `/v1/debug/memory`. So with VRAM_STEPS=1 you see fine-grained curves during inference; or poll `/v1/debug/memory` (e.g. from a cron or script) to refresh gauges on an interval.
++
++**Optional:** `FISH_MEMORY_PROFILE=1` enables `torch.profiler.profile(profile_memory=True)` for one request in the worker; trace is exported to `results/memory_profile_<timestamp>.json` (open in Chrome Tracing or PyTorch Memory Viz for per-operator allocation).
++
++**Prometheus scrape** (add to `prometheus.yml` or your config):
++
++```yaml
++scrape_configs:
++  - job_name: fish-speech
++    static_configs:
++      - targets: ['host.docker.internal:8080']   # if Prometheus in Docker
++        # or: ['127.0.0.1:8080']                 # if Prometheus on host
++    scrape_interval: 5s
++```
++
++If the API server runs in Docker and Prometheus runs on the host, use the host’s IP or `host.docker.internal` and the published port (e.g. 8080).
++
++**Быстрый запуск Prometheus** (на хосте, пока API уже слушает 8080): создать `prometheus.yml` с блоком выше и запустить `prometheus --config.file=prometheus.yml` (или через Docker/пакет). Prometheus будет слушать порт 9090; в Grafana в качестве data source указывать именно его: `http://localhost:9090`.
++
++**Готовый стек (Prometheus + Grafana + дашборд):** из корня репо выполнить `docker compose -f examples/monitoring/docker-compose.yaml -p fish-monitoring up -d`. Grafana: http://localhost:3000, дашборд «Fish Speech TTS» подхватывается автоматически. Подробнее: `examples/monitoring/README.md`.
++
++**Как добавить в Grafana:** Grafana запрашивает метрики у **Prometheus** (у него есть API `/api/v1/query`), а не у нашего API-сервера. Наш сервер отдаёт только эндпоинт `/metrics` для **сбора** (scrape) Prometheus’ом.
++
++1. **Запустите Prometheus** и укажите в `prometheus.yml` job для Fish Speech (см. блок выше). Пример запуска на хосте: `prometheus --config.file=prometheus.yml` (по умолчанию слушает порт 9090).
++2. **В Grafana:** Connections → Data sources → Add data source → **Prometheus**.
++3. **URL** укажите адрес **Prometheus**, например `http://localhost:9090` (не `http://127.0.0.1:8080`). Сохраните (Save & test).
++4. В дашбордах используйте запросы к метрикам, например: `fish_speech_vram_allocated_gb`, `fish_speech_tts_requests_total`.
++
++Если Grafana в Docker на том же хосте, в поле URL используйте `http://host.docker.internal:9090` или IP хоста вместо `localhost`.
++
++**Grafana (панели):** Add Prometheus as a data source (URL e.g. `http://localhost:9090`). Example panels:
++
++- **Time series:** `fish_speech_vram_allocated_gb`, `fish_speech_vram_max_gb` (legend: “VRAM alloc”, “VRAM max”).
++- **Stat:** current `fish_speech_vram_max_gb` to see peak.
++
++Use a 5–15 s scrape interval to capture VRAM changes during short TTS requests.
++
+ ## E2E tests
+ 
+ With the server already running:
+diff --git a/fish_speech/inference_engine/__init__.py b/fish_speech/inference_engine/__init__.py
+index 574d434..b3ec917 100644
+--- a/fish_speech/inference_engine/__init__.py
++++ b/fish_speech/inference_engine/__init__.py
+@@ -66,6 +66,24 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
+                 ),
+             }
+ 
++        def _vram_step(step: str, seg_idx: int | None = None) -> None:
++            if not torch.cuda.is_available():
++                return
++            alloc = round(torch.cuda.memory_allocated() / (1024**3), 2)
++            max_alloc = round(torch.cuda.max_memory_allocated() / (1024**3), 2)
++            try:
++                from tools.server.metrics import set_vram_gb
++                set_vram_gb(alloc, max_alloc)
++            except Exception:
++                pass
++            if os.getenv("FISH_LOG_VRAM_STEPS", "").strip() not in ("1", "true", "TRUE"):
++                return
++            seg = f" seg_idx={seg_idx}" if seg_idx is not None else ""
++            logger.info(
++                "vram_step req={} step={}{} alloc_gb={} max_gb={}",
++                req_tag, step, seg, alloc, max_alloc,
++            )
++
+         def _mark(event: str, **extra) -> None:
+             nonlocal t_prev
+             if not profile:
+@@ -86,6 +104,7 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
+             )
+ 
+         try:
++            _vram_step("inference_start")
+             ref_id = req.reference_id
+             prompt_tokens, prompt_texts = [], []
+             if ref_id is not None:
+@@ -98,6 +117,7 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
+                     req.references, req.use_memory_cache
+                 )
+                 _mark("ref_loaded", mode="hash", refs=len(req.references))
++            _vram_step("ref_loaded")
+ 
+             # Set the random seed if provided
+             if req.seed is not None:
+@@ -112,6 +132,7 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
+                 req, prompt_tokens, prompt_texts, req_tag=req_tag, ack_queue=ack_queue
+             )
+             _mark("llama_queued")
++            _vram_step("llama_queued")
+             if stream_tokens:
+                 logger.info(
+                     "stream: inference started (token streaming), req={}", req_tag
+@@ -197,6 +218,7 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
+                             result.codes.shape[1] if result.codes is not None else 0
+                         ),
+                     )
++                    _vram_step("segment_decode_start", seg_idx=seg_idx + 1)
+                     try:
+                         if result.codes is not None and not result.codes.is_cuda:
+                             result = GenerateResponse(
+@@ -220,6 +242,7 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
+                             )
+                         raise
+                     seg_idx += 1
++                    _vram_step("segment_decode_done", seg_idx=seg_idx)
+                     _mark("segment_decoded", segment_idx=seg_idx, samples=len(segment))
+                     if stream_tokens:
+                         logger.info(
+@@ -248,6 +271,7 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
+                             seg_idx,
+                             req_tag,
+                         )
++                    _vram_step("inference_done")
+                     if ack_queue is not None:
+                         ack_queue.put(None)
+                     _mark("got_next")
+@@ -341,13 +365,33 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
+         """
+         Decode the VQ tokens to audio.
+         """
++        try:
++            from tools.server.metrics import set_vram_intermediate_gb, vram_track
++        except Exception:
++            vram_track = lambda x: __import__("contextlib").contextlib.nullcontext()
++            set_vram_intermediate_gb = lambda *a: None
+ 
+         # Don't use autocast on MPS devices
+         with autocast_exclude_mps(
+             device_type=self.decoder_model.device.type, dtype=self.precision
+         ):
+-            # Decode the symbolic tokens to audio
+-            segment = self.decode_vq_tokens(codes=result.codes)
++            with vram_track("dac_decode"):
++                codes_batch = result.codes[None]
++                z = self.decoder_model.quantizer.decode(codes_batch)
++                if torch.cuda.is_available():
++                    try:
++                        gb = torch.cuda.memory_allocated() / (1024**3)
++                        set_vram_intermediate_gb("dac", "after_quantizer", round(gb, 3))
++                    except Exception:
++                        pass
++                out = self.decoder_model.decoder(z)
++                segment = out[0].squeeze() if out.dim() > 2 else out.squeeze()
++                if torch.cuda.is_available():
++                    try:
++                        gb = torch.cuda.memory_allocated() / (1024**3)
++                        set_vram_intermediate_gb("dac", "after_decoder", round(gb, 3))
++                    except Exception:
++                        pass
+ 
+         # Convert the audio to numpy (detach: inference path has no grad, but we no longer use inference_mode)
+         return segment.float().detach().cpu().numpy()
+diff --git a/fish_speech/models/text2semantic/inference.py b/fish_speech/models/text2semantic/inference.py
+index 5d68f8c..5bb1b50 100644
+--- a/fish_speech/models/text2semantic/inference.py
++++ b/fish_speech/models/text2semantic/inference.py
+@@ -39,6 +39,37 @@ def _to_normal_tensor(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+ 
+ os.environ["TOKENIZERS_PARALLELISM"] = "false"
+ torch._inductor.config.coordinate_descent_tuning = True
++
++
++def _log_vram_step(step: str, req_tag: str | None = None) -> None:
++    """Log VRAM alloc/max at a pipeline step when FISH_LOG_VRAM_STEPS=1 (for step-by-step analysis)."""
++    if not torch.cuda.is_available():
++        return
++    alloc = round(torch.cuda.memory_allocated() / (1024**3), 2)
++    max_alloc = round(torch.cuda.max_memory_allocated() / (1024**3), 2)
++    try:
++        from tools.server.metrics import set_vram_gb
++        set_vram_gb(alloc, max_alloc)
++    except Exception:
++        pass
++    if os.getenv("FISH_LOG_VRAM_STEPS", "").strip() not in ("1", "true", "TRUE"):
++        return
++    req = req_tag or "worker"
++    logger.info("vram_step req={} step={} alloc_gb={} max_gb={}", req, step, alloc, max_alloc)
++
++
++# Running max VRAM per chunk for intermediate points (decode_one_token_ar); flushed in decode_n_tokens at chunk boundary
++_chunk_vram_max: dict[str, float] = {"after_slow": 0.0, "after_fast": 0.0}
++
++
++def _observe_time(metric, start: float) -> None:
++    if metric is not None and start >= 0:
++        try:
++            metric.observe(time.perf_counter() - start)
++        except Exception:
++            pass
++
++
+ torch._inductor.config.triton.unique_kernel_names = True
+ 
+ if hasattr(torch._inductor.config, "fx_graph_cache"):
+@@ -133,6 +164,7 @@ def decode_one_token_ar(
+     audio_parts: torch.Tensor,
+     previous_tokens: Optional[torch.Tensor] = None,
+ ) -> torch.Tensor:
++    t0 = time.perf_counter()
+     forward_result = model.forward_generate(
+         x,
+         input_pos,
+@@ -141,6 +173,14 @@ def decode_one_token_ar(
+     )
+     logits = forward_result.logits  # (1, 1, vocab_size)
+     hidden_states = forward_result.hidden_states
++    if torch.cuda.is_available():
++        try:
++            from tools.server.metrics import set_vram_intermediate_gb
++
++            gb = torch.cuda.memory_allocated() / (1024**3)
++            _chunk_vram_max["after_slow"] = max(_chunk_vram_max["after_slow"], gb)
++        except Exception:
++            pass
+ 
+     # Apply constrained decoding: only allow semantic tokens + im_end
+     biased_logits = logits + semantic_logit_bias
+@@ -173,8 +213,15 @@ def decode_one_token_ar(
+ 
+     codebooks = [main_token_normal]
+ 
++    try:
++        from tools.server.metrics import FORWARD_FAST_SECONDS
++    except Exception:
++        FORWARD_FAST_SECONDS = None
++
+     input_pos = torch.tensor([0], device=hidden_states.device, dtype=torch.long)
++    t_fast = time.perf_counter()
+     model.forward_generate_fast(hidden_states, input_pos)
++    _observe_time(FORWARD_FAST_SECONDS, t_fast)
+ 
+     a = codebooks[0] - model.config.semantic_begin_id
+     a = torch.clamp(a, min=0, max=model.config.codebook_size - 1)
+@@ -186,7 +233,9 @@ def decode_one_token_ar(
+         input_pos = torch.tensor(
+             [codebook_idx], device=hidden_states.device, dtype=torch.long
+         )
++        t_fast = time.perf_counter()
+         logits = model.forward_generate_fast(hidden_states, input_pos)
++        _observe_time(FORWARD_FAST_SECONDS, t_fast)
+ 
+         short_logits = logits  # DualAR predicts config.codebook_size number of tokens
+ 
+@@ -201,8 +250,23 @@ def decode_one_token_ar(
+         hidden_states = model.fast_embeddings(a)
+         codebooks.append(a)
+ 
++    if torch.cuda.is_available():
++        try:
++            from tools.server.metrics import set_vram_intermediate_gb
++
++            gb = torch.cuda.memory_allocated() / (1024**3)
++            _chunk_vram_max["after_fast"] = max(_chunk_vram_max["after_fast"], gb)
++        except Exception:
++            pass
++
+     codebooks = torch.stack(codebooks, dim=1)
+ 
++    try:
++        from tools.server.metrics import DECODE_ONE_TOKEN_SECONDS
++        _observe_time(DECODE_ONE_TOKEN_SECONDS, t0)
++    except Exception:
++        pass
++
+     # Only delete references, let Python GC handle cleanup
+     del logits, hidden_states, forward_result
+ 
+@@ -341,6 +405,14 @@ def decode_n_tokens(
+ 
+         if stream_chunk_size is not None and len(new_tokens) >= stream_chunk_size:
+             chunk_out = torch.cat(new_tokens, dim=1).detach().clone()
++            try:
++                from tools.server.metrics import set_vram_intermediate_gb
++                set_vram_intermediate_gb("decode_one_token_ar", "after_slow", _chunk_vram_max["after_slow"])
++                set_vram_intermediate_gb("decode_one_token_ar", "after_fast", _chunk_vram_max["after_fast"])
++                _chunk_vram_max["after_slow"] = 0.0
++                _chunk_vram_max["after_fast"] = 0.0
++            except Exception:
++                pass
+             if do_stream_log:
+                 logger.info(
+                     "stream: decode_n_tokens yielding chunk shape={} after iter={}",
+@@ -359,6 +431,14 @@ def decode_n_tokens(
+ 
+     if new_tokens:
+         remainder = torch.cat(new_tokens, dim=1).detach().clone()
++        try:
++            from tools.server.metrics import set_vram_intermediate_gb
++            set_vram_intermediate_gb("decode_one_token_ar", "after_slow", _chunk_vram_max["after_slow"])
++            set_vram_intermediate_gb("decode_one_token_ar", "after_fast", _chunk_vram_max["after_fast"])
++            _chunk_vram_max["after_slow"] = 0.0
++            _chunk_vram_max["after_fast"] = 0.0
++        except Exception:
++            pass
+         if do_stream_log:
+             logger.info(
+                 "stream: decode_n_tokens yielding remainder shape={}", remainder.shape
+@@ -382,6 +462,7 @@ def generate(
+     """
+     Takes a conditioning sequence (prompt) as input and continues to generate as many tokens as requested.
+     """
++    req_tag = sampling_kwargs.pop("req_tag", None)
+ 
+     # create an empty tensor of the expected final shape and fill in the current tokens
+     T = prompt.size(1)
+@@ -455,17 +536,29 @@ def generate(
+         torch._dynamo.mark_dynamic(x_prefill, 2, min=1, max=cache_len)
+         torch._dynamo.mark_dynamic(input_pos, 0, min=1, max=cache_len)
+ 
+-    first_token = prefill_decode(
+-        model,
+-        x_prefill,
+-        input_pos,
+-        temperature,
+-        top_p,
+-        top_k_val,
+-        semantic_logit_bias,
+-        audio_masks,
+-        audio_parts,
+-    )
++    try:
++        from contextlib import nullcontext
++        from tools.server.metrics import PREFILL_SECONDS, vram_track
++    except Exception:
++        from contextlib import nullcontext
++        PREFILL_SECONDS = None
++        vram_track = lambda x: nullcontext()
++
++    t_prefill = time.perf_counter()
++    with vram_track("prefill"):
++        first_token = prefill_decode(
++            model,
++            x_prefill,
++            input_pos,
++            temperature,
++            top_p,
++            top_k_val,
++            semantic_logit_bias,
++            audio_masks,
++            audio_parts,
++        )
++    _observe_time(PREFILL_SECONDS, t_prefill)
++    _log_vram_step("after_prefill", req_tag)
+     seq[:, T : T + 1] = first_token
+ 
+     input_pos = torch.tensor([T], device=device, dtype=torch.int)
+@@ -490,7 +583,14 @@ def generate(
+ 
+     if stream_chunk_size is None:
+         # Non-streaming: single chunk from decode_n_tokens
+-        x = next(iter(decode_iter))
++        try:
++            from tools.server.metrics import DECODE_N_TOKENS_SECONDS
++        except Exception:
++            DECODE_N_TOKENS_SECONDS = None
++        t_decode = time.perf_counter()
++        with vram_track("decode_n_tokens"):
++            x = next(iter(decode_iter))
++        _observe_time(DECODE_N_TOKENS_SECONDS, t_decode)
+         seq = seq[:, : T + 1 + x.size(1)]
+         seq[:, T + 1 :] = x
+         del first_token, x, prompt, empty, input_pos
+@@ -710,10 +810,13 @@ def generate_long(
+     prompt_tokens: Optional[Union[torch.Tensor, list[torch.Tensor]]] = None,
+     stream_tokens: bool = False,
+     stream_chunk_size: int = 20,
++    req_tag: Optional[str] = None,
+ ):
+     assert 0 < top_p <= 1, "top_p must be in (0, 1]"
+     assert 0 < temperature < 2, "temperature must be in (0, 2)"
+ 
++    _log_vram_step("generate_long_start", req_tag)
++
+     use_prompt = bool(prompt_text) and bool(prompt_tokens)
+     if use_prompt and isinstance(prompt_text, str):
+         prompt_text = [prompt_text]
+@@ -883,6 +986,7 @@ def generate_long(
+                     batch_idx,
+                     stream_chunk_size,
+                 )
++                _log_vram_step("before_generate", req_tag)
+                 gen = generate(
+                     model=model,
+                     prompt=encoded,
+@@ -895,6 +999,7 @@ def generate_long(
+                     top_k=top_k,
+                     stream_chunk_size=stream_chunk_size,
+                     compile=compile,
++                    req_tag=req_tag,
+                 )
+                 codes_list: list[torch.Tensor] = []
+                 chunk_idx = 0
+@@ -913,12 +1018,15 @@ def generate_long(
+                             action="sample", codes=codes_chunk, text=batch_text
+                         )
+                     codes_list.append(chunk)
++                    if chunk_idx == 1:
++                        _log_vram_step("after_first_stream_chunk", req_tag)
+                     chunk_idx += 1
+                 logger.info(
+                     "stream: generate_long finished chunk_idx={} total_chunks={}",
+                     chunk_idx,
+                     len(codes_list),
+                 )
++                _log_vram_step("generate_long_done", req_tag)
+                 codes = (
+                     torch.cat(codes_list, dim=1)[1:, :].clone() if codes_list else None
+                 )
+@@ -1063,6 +1171,27 @@ def launch_thread_safe_queue(
+             gb, count = _model_param_memory_gb(model)
+             memory_info["llama_param_gb"] = gb
+             memory_info["llama_param_count"] = count
++        try:
++            from tools.server.metrics import set_model_params_gb
++            slow_parts = [model.embeddings, model.layers, model.norm]
++            if hasattr(model, "codebook_embeddings"):
++                slow_parts.append(model.codebook_embeddings)
++            if hasattr(model, "output") and getattr(model, "output", None) is not None:
++                slow_parts.append(model.output)
++            slow_gb = sum(_model_param_memory_gb(m)[0] for m in slow_parts)
++            set_model_params_gb("llm_slow", round(slow_gb, 3))
++            if hasattr(model, "fast_layers"):
++                fast_parts = [
++                    model.fast_project_in,
++                    model.fast_embeddings,
++                    model.fast_layers,
++                    model.fast_norm,
++                    model.fast_output,
++                ]
++                fast_gb = sum(_model_param_memory_gb(m)[0] for m in fast_parts)
++                set_model_params_gb("llm_fast", round(fast_gb, 3))
++        except Exception:
++            pass
+         init_event.set()
+ 
+         while True:
+@@ -1087,56 +1216,85 @@ def launch_thread_safe_queue(
+                     kwargs.get("stream_chunk_size"),
+                 )
+ 
++            from contextlib import nullcontext
++            memory_profile = (
++                os.getenv("FISH_MEMORY_PROFILE", "0").strip().lower()
++                in ("1", "true", "yes")
++            ) and torch.cuda.is_available()
++            if memory_profile:
++                prof_ctx = torch.profiler.profile(
++                    profile_memory=True,
++                    record_shapes=True,
++                    with_stack=True,
++                )
++            else:
++                prof_ctx = nullcontext()
++
+             try:
+-                for chunk in generate_long(
+-                    model=model, decode_one_token=decode_one_token, **kwargs
+-                ):
+-                    if stream_tokens and put_count < 5:
+-                        logger.info(
+-                            "stream: worker putting chunk put_count={} action={} req={}",
+-                            put_count,
+-                            getattr(chunk, "action", None),
+-                            req_tag,
+-                        )
+-                    put_count += 1
+-                    if profile_cadence:
+-                        now = time.perf_counter()
+-                        delta_ms = (now - t_last_put) * 1000.0
+-                        total_ms = (now - t_req_start) * 1000.0
+-                        t_last_put = now
+-                        action = getattr(chunk, "action", type(chunk).__name__)
+-                        vram_s = ""
+-                        if torch.cuda.is_available():
+-                            vram_s = " vram_alloc_gb={:.2f} vram_max_gb={:.2f}".format(
+-                                torch.cuda.memory_allocated() / (1024**3),
+-                                torch.cuda.max_memory_allocated() / (1024**3),
++                with prof_ctx as _prof:
++                    for chunk in generate_long(
++                        model=model,
++                        decode_one_token=decode_one_token,
++                        req_tag=req_tag,
++                        **kwargs,
++                    ):
++                        if stream_tokens and put_count < 5:
++                            logger.info(
++                                "stream: worker putting chunk put_count={} action={} req={}",
++                                put_count,
++                                getattr(chunk, "action", None),
++                                req_tag,
+                             )
+-                        logger.info(
+-                            "queue_put req={} action={} delta_ms={:.1f} total_ms={:.1f}{}",
+-                            req_tag,
+-                            action,
+-                            delta_ms,
+-                            total_ms,
+-                            vram_s,
+-                        )
+-                    # Send chunk with codes on CPU so queue/main never hold GPU tensors; avoids 24 GB stuck after request on 32 GB.
+-                    out = chunk
+-                    codes = getattr(chunk, "codes", None)
+-                    if codes is not None and codes.is_cuda:
+-                        out = GenerateResponse(
+-                            action=chunk.action,
+-                            codes=codes.cpu(),
+-                            text=getattr(chunk, "text", None),
++                        put_count += 1
++                        if profile_cadence:
++                            now = time.perf_counter()
++                            delta_ms = (now - t_last_put) * 1000.0
++                            total_ms = (now - t_req_start) * 1000.0
++                            t_last_put = now
++                            action = getattr(chunk, "action", type(chunk).__name__)
++                            vram_s = ""
++                            if torch.cuda.is_available():
++                                vram_s = " vram_alloc_gb={:.2f} vram_max_gb={:.2f}".format(
++                                    torch.cuda.memory_allocated() / (1024**3),
++                                    torch.cuda.max_memory_allocated() / (1024**3),
++                                )
++                            logger.info(
++                                "queue_put req={} action={} delta_ms={:.1f} total_ms={:.1f}{}",
++                                req_tag,
++                                action,
++                                delta_ms,
++                                total_ms,
++                                vram_s,
++                            )
++                        # Send chunk with codes on CPU so queue/main never hold GPU tensors; avoids 24 GB stuck after request on 32 GB.
++                        out = chunk
++                        codes = getattr(chunk, "codes", None)
++                        if codes is not None and codes.is_cuda:
++                            out = GenerateResponse(
++                                action=chunk.action,
++                                codes=codes.cpu(),
++                                text=getattr(chunk, "text", None),
++                            )
++                        response_queue.put(
++                            WrappedGenerateResponse(status="success", response=out)
+                         )
+-                    response_queue.put(
+-                        WrappedGenerateResponse(status="success", response=out)
+-                    )
+-                    # Back-pressure: wait for main thread to finish DAC decode so we don't run LLM and DAC on GPU at once (OOM on 32 GB).
+-                    if stream_tokens and ack_queue is not None:
+-                        ack_queue.get()
+-                    # During streaming, free cache after each chunk to reduce fragmentation (32 GB often OOMs by mid-stream)
+-                    if stream_tokens and torch.cuda.is_available():
+-                        torch.cuda.empty_cache()
++                        # Back-pressure: wait for main thread to finish DAC decode so we don't run LLM and DAC on GPU at once (OOM on 32 GB).
++                        if stream_tokens and ack_queue is not None:
++                            ack_queue.get()
++                        # During streaming, free cache after each chunk to reduce fragmentation (32 GB often OOMs by mid-stream)
++                        if stream_tokens and torch.cuda.is_available():
++                            torch.cuda.empty_cache()
++
++                if memory_profile and _prof is not None:
++                    from pathlib import Path
++                    out_dir = Path("results")
++                    out_dir.mkdir(parents=True, exist_ok=True)
++                    trace_path = out_dir / f"memory_profile_{int(time.time())}.json"
++                    try:
++                        _prof.export_chrome_trace(str(trace_path))
++                        logger.info("Memory profile saved to %s", trace_path)
++                    except Exception as e:
++                        logger.warning("Could not export memory profile: %s", e)
+ 
+                 # Release KV cache and clear allocator so next request starts near baseline (avoids OOM on 32 GB).
+                 logger.info("worker: post-request cleanup starting")
+diff --git a/pyproject.toml b/pyproject.toml
+index 93f6959..b7a8fb6 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -47,7 +47,8 @@ dependencies = [
+     "cachetools",
+     "descript-audio-codec",
+     "descript-audiotools",
+-    "safetensors"
++    "safetensors",
++    "prometheus-client>=0.19.0",
+ ]
+ 
+ [project.optional-dependencies]
+diff --git a/scripts/run_server_32gb.sh b/scripts/run_server_32gb.sh
+index 818e9ee..544c967 100755
+--- a/scripts/run_server_32gb.sh
++++ b/scripts/run_server_32gb.sh
+@@ -10,6 +10,8 @@ IMAGE="${IMAGE:-fish-speech-webui:cu129}"
+ CONTAINER="${CONTAINER:-fish-speech}"
+ PORT="${PORT:-8080}"
+ COMPILE="${COMPILE:-0}"
++VRAM_STEPS="${VRAM_STEPS:-0}"
++HALF="${HALF:-0}"
+ CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-checkpoints/s2-pro}"
+ 
+ # When running from a parent repo: mount parent as /workspace so checkpoints and repo are both visible
+@@ -26,7 +28,7 @@ fi
+ 
+ echo "=== Fish Speech API (32GB / RTX 5090 style) ==="
+ echo "  MOUNT_ROOT=$MOUNT_ROOT  REPO_REL=$REPO_REL  CHECKPOINTS=$CHECKPOINTS_REL"
+-echo "  IMAGE=$IMAGE  CONTAINER=$CONTAINER  PORT=$PORT  COMPILE=$COMPILE"
++echo "  IMAGE=$IMAGE  CONTAINER=$CONTAINER  PORT=$PORT  COMPILE=$COMPILE  VRAM_STEPS=$VRAM_STEPS  HALF=$HALF"
+ echo ""
+ 
+ # 1) Build image if not present (CUDA 12.9 for modern GPUs)
+@@ -70,6 +72,10 @@ docker rm -f "$CONTAINER" 2>/dev/null || true
+ 
+ # 4) Run server (tuned for 32GB: cache=384, max_new_tokens cap=80; warmup when COMPILE=1)
+ echo "Starting server on port $PORT ..."
++VRAM_ENV=""
++if [[ "$VRAM_STEPS" = "1" ]]; then
++  VRAM_ENV="-e FISH_LOG_VRAM_STEPS=1"
++fi
+ docker run -d --rm --name "$CONTAINER" \
+   -p "$PORT:8080" \
+   --gpus all \
+@@ -77,7 +83,10 @@ docker run -d --rm --name "$CONTAINER" \
+   -e FISH_CACHE_MAX_SEQ_LEN=384 \
+   -e FISH_MAX_NEW_TOKENS_CAP=80 \
+   -e PYTHONPATH=/workspace/"$REPO_REL" \
++  $VRAM_ENV \
+   -v "$MOUNT_ROOT":/workspace -w /workspace \
++  --health-cmd "curl -f http://localhost:8080/v1/health || exit 1" \
++  --health-interval 30s --health-timeout 10s --health-start-period 60s --health-retries 3 \
+   --entrypoint /app/.venv/bin/python \
+   "$IMAGE" \
+   /workspace/"$REPO_REL"/tools/api_server.py \
+@@ -85,7 +94,8 @@ docker run -d --rm --name "$CONTAINER" \
+   --device cuda \
+   --llama-checkpoint-path "/workspace/$CHECKPOINTS_REL" \
+   --decoder-checkpoint-path "/workspace/$CHECKPOINTS_REL/codec.pth" \
+-  $([ "$COMPILE" = "1" ] && echo --compile || true)
++  $([ "$COMPILE" = "1" ] && echo --compile || true) \
++  $([ "$HALF" = "1" ] && echo --half || true)
+ 
+ echo ""
+ echo "Server starting. With COMPILE=1, warmup runs at startup (2–10 min); then /v1/health returns 200."
+diff --git a/tools/api_server.py b/tools/api_server.py
+index 6cf605d..e7a9e56 100644
+--- a/tools/api_server.py
++++ b/tools/api_server.py
+@@ -32,10 +32,32 @@ pyrootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
+ 
+ from tools.server.api_utils import MsgPackRequest, parse_args
+ from tools.server.exception_handler import ExceptionHandler
++from tools.server.metrics import get_metrics_body, get_metrics_content_type
+ from tools.server.model_manager import ModelManager
+ from tools.server.views import routes
+ 
+ 
++def metrics_middleware(app):
++    """ASGI middleware: serve GET /metrics (Prometheus) without auth."""
++
++    async def wrapper(scope, receive, send):
++        if scope.get("type") == "http" and scope.get("path") == "/metrics" and scope.get("method") == "GET":
++            body = get_metrics_body()
++            await send({
++                "type": "http.response.start",
++                "status": 200,
++                "headers": [
++                    (b"content-type", get_metrics_content_type().encode()),
++                    (b"content-length", str(len(body)).encode()),
++                ],
++            })
++            await send({"type": "http.response.body", "body": body})
++            return
++        await app(scope, receive, send)
++
++    return wrapper
++
++
+ class API(ExceptionHandler):
+     def __init__(self):
+         self.args = parse_args()
+@@ -69,7 +91,7 @@ class API(ExceptionHandler):
+             ),
+         ).routes
+ 
+-        # Initialize the app
++        # Initialize the app (Kui); wrap for uvicorn so GET /metrics is no-auth
+         self.app = Kui(
+             routes=self.routes + self.openapi[1:],  # Remove the default route
+             exception_handlers={
+@@ -79,6 +101,7 @@ class API(ExceptionHandler):
+             factory_class=FactoryClass(http=MsgPackRequest),
+             cors_config=CORSConfig(),
+         )
++        self._asgi_app = metrics_middleware(self.app)
+ 
+         # Add the state variables
+         self.app.state.lock = Lock()
+@@ -123,7 +146,7 @@ if __name__ == "__main__":
+         host, port = api.args.listen.split(":")  # IPv4
+ 
+     uvicorn.run(
+-        api.app,
++        api._asgi_app,
+         host=host,
+         port=int(port),
+         workers=api.args.workers,
+diff --git a/tools/server/inference.py b/tools/server/inference.py
+index bbec390..70ab542 100644
+--- a/tools/server/inference.py
++++ b/tools/server/inference.py
+@@ -1,3 +1,4 @@
++import time
+ from http import HTTPStatus
+ 
+ import numpy as np
+@@ -5,6 +6,7 @@ from kui.asgi import HTTPException
+ 
+ from fish_speech.inference_engine import TTSInferenceEngine
+ from fish_speech.utils.schema import ServeTTSRequest
++from tools.server.metrics import inc_tts_requests, observe_ttfa
+ 
+ AMPLITUDE = 32768  # Needs an explaination
+ 
+@@ -14,37 +16,51 @@ def inference_wrapper(req: ServeTTSRequest, engine: TTSInferenceEngine):
+     Wrapper for the inference function.
+     Used in the API server.
+     """
++    t0 = time.perf_counter()
++    streaming = getattr(req, "streaming", True)
++    first_audio_yielded = False
+     count = 0
+-    for result in engine.inference(req):
+-        match result.code:
+-            case "header":
+-                if isinstance(result.audio, tuple):
+-                    header = result.audio[1]
+-                    if isinstance(header, np.ndarray):
+-                        yield header.tobytes()
+-                    elif isinstance(header, (bytes, bytearray)):
+-                        yield bytes(header)
+-
+-            case "error":
+-                raise HTTPException(
+-                    HTTPStatus.INTERNAL_SERVER_ERROR,
+-                    content=str(result.error),
+-                )
+-
+-            case "segment":
+-                count += 1
+-                if isinstance(result.audio, tuple):
+-                    yield (result.audio[1] * AMPLITUDE).astype(np.int16).tobytes()
+-
+-            case "final":
+-                count += 1
+-                if isinstance(result.audio, tuple):
+-                    final = result.audio[1]
+-                    if isinstance(final, np.ndarray):
+-                        yield (final * AMPLITUDE).astype(np.int16).tobytes()
+-                    elif isinstance(final, (bytes, bytearray)):
+-                        yield bytes(final)
+-                return None  # Stop the generator
++    try:
++        for result in engine.inference(req):
++            match result.code:
++                case "header":
++                    if isinstance(result.audio, tuple):
++                        header = result.audio[1]
++                        if isinstance(header, np.ndarray):
++                            yield header.tobytes()
++                        elif isinstance(header, (bytes, bytearray)):
++                            yield bytes(header)
++
++                case "error":
++                    raise HTTPException(
++                        HTTPStatus.INTERNAL_SERVER_ERROR,
++                        content=str(result.error),
++                    )
++
++                case "segment":
++                    if not first_audio_yielded:
++                        ttfa_s = time.perf_counter() - t0
++                        observe_ttfa(streaming, ttfa_s)
++                        first_audio_yielded = True
++                    count += 1
++                    if isinstance(result.audio, tuple):
++                        yield (result.audio[1] * AMPLITUDE).astype(np.int16).tobytes()
++
++                case "final":
++                    if not first_audio_yielded:
++                        ttfa_s = time.perf_counter() - t0
++                        observe_ttfa(streaming, ttfa_s)
++                    count += 1
++                    if isinstance(result.audio, tuple):
++                        final = result.audio[1]
++                        if isinstance(final, np.ndarray):
++                            yield (final * AMPLITUDE).astype(np.int16).tobytes()
++                        elif isinstance(final, (bytes, bytearray)):
++                            yield bytes(final)
++                    return None  # Stop the generator
++    finally:
++        if count > 0:
++            inc_tts_requests(streaming, time.perf_counter() - t0)
+ 
+     if count == 0:
+         raise HTTPException(
+diff --git a/tools/server/model_manager.py b/tools/server/model_manager.py
+index 42d03af..f544a9a 100644
+--- a/tools/server/model_manager.py
++++ b/tools/server/model_manager.py
+@@ -101,6 +101,15 @@ class ModelManager:
+             checkpoint_path=checkpoint_path,
+             device=device,
+         )
++        try:
++            from tools.server.metrics import set_model_params_gb
++            total = sum(
++                p.numel() * p.element_size()
++                for p in self.decoder_model.parameters()
++            )
++            set_model_params_gb("dac", round(total / (1024**3), 3))
++        except Exception:
++            pass
+         logger.info("Decoder model loaded.")
+ 
+     def warm_up(self, tts_inference_engine, *, compile: bool = False) -> None:
+diff --git a/tools/server/views.py b/tools/server/views.py
+index f309170..5083ba1 100644
+--- a/tools/server/views.py
++++ b/tools/server/views.py
+@@ -185,6 +185,12 @@ async def debug_memory():
+     """
+     model_manager = getattr(request.app.state, "model_manager", None)
+     info = _gpu_memory_info(model_manager)
++    if info.get("cuda_available") and "allocated_gb" in info and "max_allocated_gb" in info:
++        try:
++            from tools.server.metrics import set_vram_gb
++            set_vram_gb(info["allocated_gb"], info["max_allocated_gb"])
++        except Exception:
++            pass
+     if request.query_params.get("dump", "").strip() in ("1", "true", "True"):
+         out_dir = request.query_params.get("dump_dir", "").strip() or "/workspace"
+         snapshot_path, snapshot_err = _dump_memory_snapshot(out_dir=out_dir)
+diff --git a/uv.lock b/uv.lock
+index cf1d7aa..16ec760 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1072,6 +1072,7 @@ dependencies = [
+     { name = "numpy" },
+     { name = "opencc-python-reimplemented" },
+     { name = "ormsgpack" },
++    { name = "prometheus-client" },
+     { name = "pyaudio" },
+     { name = "pydantic" },
+     { name = "pydub" },
+@@ -1166,6 +1167,7 @@ requires-dist = [
+     { name = "numpy" },
+     { name = "opencc-python-reimplemented", specifier = "==0.1.7" },
+     { name = "ormsgpack" },
++    { name = "prometheus-client", specifier = ">=0.19.0" },
+     { name = "pyaudio" },
+     { name = "pydantic", specifier = "==2.9.2" },
+     { name = "pydub" },
+@@ -3596,6 +3598,15 @@ wheels = [
+     { url = "https://files.pythonhosted.org/packages/a8/87/77cc11c7a9ea9fd05503def69e3d18605852cd0d4b0d3b8f15bbeb3ef1d1/pooch-1.8.2-py3-none-any.whl", hash = "sha256:3529a57096f7198778a5ceefd5ac3ef0e4d06a6ddaf9fc2d609b806f25302c47", size = 64574, upload-time = "2024-06-06T16:53:44.343Z" },
+ ]
+ 
++[[package]]
++name = "prometheus-client"
++version = "0.24.1"
++source = { registry = "https://pypi.org/simple" }
++sdist = { url = "https://files.pythonhosted.org/packages/f0/58/a794d23feb6b00fc0c72787d7e87d872a6730dd9ed7c7b3e954637d8f280/prometheus_client-0.24.1.tar.gz", hash = "sha256:7e0ced7fbbd40f7b84962d5d2ab6f17ef88a72504dcf7c0b40737b43b2a461f9", size = 85616, upload-time = "2026-01-14T15:26:26.965Z" }
++wheels = [
++    { url = "https://files.pythonhosted.org/packages/74/c3/24a2f845e3917201628ecaba4f18bab4d18a337834c1df2a159ee9d22a42/prometheus_client-0.24.1-py3-none-any.whl", hash = "sha256:150db128af71a5c2482b36e588fc8a6b95e498750da4b17065947c16070f4055", size = 64057, upload-time = "2026-01-14T15:26:24.42Z" },
++]
++
+ [[package]]
+ name = "prompt-toolkit"
+ version = "3.0.52"

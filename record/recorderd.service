@@ -1,0 +1,15 @@
+[Unit]
+Description=PipeWire dual-track recorder daemon
+After=pipewire.service pipewire-pulse.service wireplumber.service
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+PartOf=pipewire.service pipewire-pulse.service wireplumber.service
+
+[Service]
+Type=simple
+Environment=RECORDER_CONFIG=%h/.config/recorderd/config.toml
+ExecStart=%h/.local/bin/recorderd
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

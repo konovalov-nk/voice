@@ -1,0 +1,36 @@
+FROM docker.io/pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ffmpeg \
+    git \
+    jq \
+    libsndfile1 \
+    make \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /tmp/requirements.txt
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    python -m pip install -r /tmp/requirements.txt && \
+    python -m pip install "TTS>=0.22.0,<0.23.0" && \
+    python -m pip install "transformers==4.41.2"
+
+COPY .cache/sglang-omni /opt/sglang-omni
+
+RUN python -m pip install msgpack "sglang==0.5.8" "flashinfer-python==0.6.1" "sgl-kernel==0.3.21" && \
+    python -m pip install --no-deps "descript-audiotools==0.7.2" "descript-audio-codec==1.0.0" && \
+    python -m pip install flatten-dict randomname markdown2 importlib-resources julius torch-stoi pystoi argbind ffmpy && \
+    python -m pip install /opt/sglang-omni --no-deps
+
+WORKDIR /workspace
+
+COPY . /workspace
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["bash"]

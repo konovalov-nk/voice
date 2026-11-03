@@ -1,0 +1,7 @@
+services:
+  proxybroker2:
+    image: bluet/proxybroker2
+    command: --max-conn 80 --timeout 6 --log INFO serve --host 0.0.0.0 --port 8888 --types HTTP HTTPS CONNECT:80 --lvl Transparent Anonymous High --min-queue 1 --min-req-proxy 1 --max-error-rate 0.95 --max-resp-time 25 --prefer-connect
+    ports:
+      - "8888:8888"
+    restart: unless-stopped

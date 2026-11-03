@@ -1,0 +1,68 @@
+diff --git a/BSAFileExtractor.py b/BSAFileExtractor.py
+index 61f47ab..94d0fc5 100644
+--- a/BSAFileExtractor.py
++++ b/BSAFileExtractor.py
+@@ -81,7 +81,7 @@ try:
+         print('-----------------------------------')
+         print(archive.container.header)               
+     
+-    if nb_args == 2: # If there is no other argument but the archive
++    if nb_args == 2 or not list_filenames:
+         archive.extract(output_folder) 
+         print('-----------------------------------\nArchive has been successfully extracted to ' + str(output_folder))
+     else:
+diff --git a/bethesda-structs/bethesda_structs/archive/bsa.py b/bethesda-structs/bethesda_structs/archive/bsa.py
+index 95ba06b..b0e4ada 100644
+--- a/bethesda-structs/bethesda_structs/archive/bsa.py
++++ b/bethesda-structs/bethesda_structs/archive/bsa.py
+@@ -12,15 +12,15 @@ from construct import (
+     Struct,
+     VarInt,
+     Adapter,
+-    CString,
+     Int32ul,
+     Int64ul,
+     Container,
++    Prefixed,
+     FlagsEnum,
+     Compressed,
+     IfThenElse,
+     GreedyBytes,
+-    PascalString,
++    NullTerminated,
+ )
+ 
+ from ._common import ArchiveFile, BaseArchive
+@@ -61,6 +61,14 @@ class LZ4CompressedAdapter(Adapter):
+         return lz4.frame.compress(obj)
+ 
+ 
++class Latin1Decode(Adapter):
++    def _decode(self, obj, context, path):
++        return obj.decode("latin-1")
++
++    def _encode(self, obj, context, path):
++        return obj.encode("latin-1")
++
++
+ class BSAArchive(BaseArchive):
+     """Archive type for BSA files.
+ 
+@@ -156,7 +164,7 @@ class BSAArchive(BaseArchive):
+         "name"
+         / If(
+             lambda this: this._.header.archive_flags.directories_named,
+-            PascalString(VarInt, "utf8"),
++            Latin1Decode(Prefixed(VarInt, GreedyBytes)),
+         ),
+         "file_records"
+         / Array(
+@@ -179,7 +187,7 @@ class BSAArchive(BaseArchive):
+         "file_names"
+         / If(
+             lambda this: this.header.archive_flags.files_named,
+-            Array(lambda this: this.header.file_count, CString("utf8")),
++            Array(lambda this: this.header.file_count, Latin1Decode(NullTerminated(GreedyBytes, term=b"\x00"))),
+         ),
+     )
+     """The **partial** structure of BSA archives.

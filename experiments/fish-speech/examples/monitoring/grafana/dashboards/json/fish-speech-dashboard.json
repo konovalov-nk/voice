@@ -1,0 +1,161 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "default": true },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "axisLabel": "", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "scaleDistribution": { "type": "linear" }, "showPoints": "auto", "spanNulls": true },
+          "unit": "decgbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "fish_speech_vram_allocated_gb", "legendFormat": "VRAM allocated", "refId": "A" },
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "fish_speech_vram_max_gb", "legendFormat": "VRAM max", "refId": "B" }
+      ],
+      "title": "VRAM (GB)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "default": true },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "scaleDistribution": { "type": "linear" }, "showPoints": "auto", "spanNulls": true },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "sum by (streaming) (rate(fish_speech_tts_requests_total[$__rate_interval]))", "legendFormat": "{{streaming}}", "refId": "A" }
+      ],
+      "title": "TTS request rate (req/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "default": true },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "scaleDistribution": { "type": "linear" }, "showPoints": "auto", "spanNulls": true },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "histogram_quantile(0.99, sum by (le, streaming) (rate(fish_speech_tts_request_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "P99 {{streaming}}", "refId": "A" },
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "histogram_quantile(0.5, sum by (le, streaming) (rate(fish_speech_tts_request_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "P50 {{streaming}}", "refId": "B" }
+      ],
+      "title": "TTS request duration (s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "default": true },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "scaleDistribution": { "type": "linear" }, "showPoints": "auto", "spanNulls": true },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "histogram_quantile(0.99, sum by (le, streaming) (rate(fish_speech_tts_ttfa_seconds_bucket[$__rate_interval])))", "legendFormat": "TTFA P99 {{streaming}}", "refId": "A" },
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "histogram_quantile(0.5, sum by (le, streaming) (rate(fish_speech_tts_ttfa_seconds_bucket[$__rate_interval])))", "legendFormat": "TTFA P50 {{streaming}}", "refId": "B" }
+      ],
+      "title": "Time to first audio (s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "default": true },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "align": "auto" },
+          "mappings": [],
+          "unit": "decgbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true, "sortBy": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "fish_speech_model_params_gb", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "A" }
+      ],
+      "title": "Model params (GB) by component",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "default": true },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "align": "auto" },
+          "mappings": [],
+          "unit": "decgbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true, "sortBy": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "fish_speech_func_vram_peak_gb", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "A" }
+      ],
+      "title": "Per-function VRAM peak (GB)",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "default": true },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "scaleDistribution": { "type": "linear" }, "showPoints": "auto", "spanNulls": true },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "id": 7,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "histogram_quantile(0.99, sum by (le) (rate(fish_speech_prefill_seconds_bucket[$__rate_interval])))", "legendFormat": "prefill P99", "refId": "A" },
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "histogram_quantile(0.99, sum by (le) (rate(fish_speech_decode_n_tokens_seconds_bucket[$__rate_interval])))", "legendFormat": "decode_n_tokens P99", "refId": "B" },
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "histogram_quantile(0.99, sum by (le) (rate(fish_speech_decode_one_token_seconds_bucket[$__rate_interval])))", "legendFormat": "decode_one_token P99", "refId": "C" },
+        { "datasource": { "type": "prometheus", "default": true }, "expr": "histogram_quantile(0.99, sum by (le) (rate(fish_speech_forward_fast_seconds_bucket[$__rate_interval])))", "legendFormat": "forward_fast P99", "refId": "D" }
+      ],
+      "title": "Pipeline step latency P99 (s)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "tags": ["fish-speech", "tts"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Fish Speech TTS",
+  "uid": "fish-speech",
+  "version": 1
+}

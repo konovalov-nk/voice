@@ -1,0 +1,47 @@
+config_cls: S2ProPipelineConfig
+model_path: /workspace/checkpoints/s2-pro
+relay_backend: shm
+
+stages:
+  - name: preprocessing
+    executor:
+      factory: sglang_omni.models.fishaudio_s2_pro.pipeline.stages.create_preprocessing_executor
+      args: {}
+    get_next: sglang_omni.models.fishaudio_s2_pro.pipeline.next_stage.preprocessing_next
+    input_handler:
+      type: direct
+    relay:
+      slot_size_mb: 512
+      credits: 2
+      device: cpu
+    num_workers: 1
+
+  - name: tts_engine
+    executor:
+      factory: sglang_fish_flashinfer.create_sglang_tts_engine_executor
+      args:
+        device: cuda:0
+        attention_backend: flashinfer
+        max_new_tokens: 1024
+    get_next: sglang_omni.models.fishaudio_s2_pro.pipeline.next_stage.tts_engine_next
+    input_handler:
+      type: direct
+    relay:
+      slot_size_mb: 512
+      credits: 2
+      device: cuda
+    num_workers: 1
+
+  - name: vocoder
+    executor:
+      factory: sglang_fish_vocoder_trace.create_vocoder_executor
+      args:
+        device: cuda:0
+    get_next: sglang_omni.models.fishaudio_s2_pro.pipeline.next_stage.vocoder_next
+    input_handler:
+      type: direct
+    relay:
+      slot_size_mb: 512
+      credits: 2
+      device: cpu
+    num_workers: 1

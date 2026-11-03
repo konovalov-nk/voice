@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import os
+import re
+import sys
+from dataclasses import dataclass
+from datetime import timedelta
+from pathlib import Path
+
+
+def _setup_cublas12_compat() -> str | None:
+    """Create symlinks libcublas.so.12 -> .13 (from cu13 pip packages) if needed.
+    Returns path to put in LD_LIBRARY_PATH, or None if everything looks fine.
+    """
+    ld = os.environ.get("LD_LIBRARY_PATH", "")
+    for p in ld.split(":"):
+        if p and os.path.isdir(p):
+            if any("libcublas.so.12" in f for f in os.listdir(p)):
+                return None
+    # look for nvidia cu13 libs installed by pip
+    candidates: list[Path] = []
+    for base in (sys.prefix, os.path.expanduser("~"), os.path.expanduser("~/.local")):
+        for pat in (
+            f"{base}/lib/python*/site-packages/nvidia/cu*/lib/libcublas.so.13",
+            f"{base}/.local/lib/python*/site-packages/nvidia/cu*/lib/libcublas.so.13",
+        ):
+            for hit in glob.glob(pat):
+                candidates.append(Path(hit).parent)
+    if not candidates:
+        return None
+    libdir = candidates[0]
+    compat = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser() / "recorderd" / "cu12-compat"
+    compat.mkdir(parents=True, exist_ok=True)
+    for name in ("libcublas.so.13", "libcublasLt.so.13"):
+        src = libdir / name
+        if src.exists():
+            dst = compat / name.replace(".13", ".12")
+            if not dst.exists():
+                try:
+                    dst.symlink_to(src)
+                except FileExistsError:
+                    pass
+    return str(compat)
+
+
+def _ensure_cublas12() -> None:
+    """If cublas.so.12 is missing, inject compat dir and re-exec the current script."""
+    compat = _setup_cublas12_compat()
+    if not compat:
+        return
+    ld = os.environ.get("LD_LIBRARY_PATH", "")
+    if compat not in ld:
+        new_ld = f"{compat}:{ld}" if ld else compat
+        env = os.environ.copy()
+        env["LD_LIBRARY_PATH"] = new_ld
+        os.execve(sys.executable, [sys.executable] + sys.argv, env)
+
+
+# must run before importing faster_whisper (which pulls ctranslate2 -> cublas)
+_ensure_cublas12()
+
+
+try:
+    from faster_whisper import WhisperModel
+except ImportError:
+    print("faster-whisper is not installed.", file=sys.stderr)
+    print("Install with:", file=sys.stderr)
+    print("  python3 -m pip install --user --break-system-packages faster-whisper", file=sys.stderr)
+    sys.exit(1)
+
+
+def env_path(var_name: str, default: str) -> Path:
+    return Path(os.environ.get(var_name, default)).expanduser()
+
+
+@dataclass
+class Config:
+    data_dir: Path
+    state_dir: Path
+
+    # STT defaults from config
+    stt_model: str
+    stt_language: str
+    stt_device: str
+    stt_transcribe_mic: bool
+    stt_transcribe_sys: bool
+    stt_mic_label: str
+    stt_sys_label: str
+
+
+def load_config() -> Config:
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore
+
+    default_config_path = env_path("XDG_CONFIG_HOME", "~/.config") / "recorderd" / "config.toml"
+    cfg_path = Path(os.environ.get("RECORDER_CONFIG", str(default_config_path))).expanduser()
+
+    data: dict = {}
+    if cfg_path.exists() and tomllib is not None:
+        try:
+            data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+
+    data_dir = Path(data.get("data_dir", str(env_path("XDG_DATA_HOME", "~/.local/share") / "recorderd"))).expanduser()
+    state_dir = Path(data.get("state_dir", str(env_path("XDG_STATE_HOME", "~/.local/state") / "recorderd"))).expanduser()
+
+    stt_model = data.get("stt_model", "medium")
+    stt_language = data.get("stt_language", "ru") or ""
+    stt_device = data.get("stt_device", "cuda")
+    stt_transcribe_mic = bool(data.get("stt_transcribe_mic", True))
+    stt_transcribe_sys = bool(data.get("stt_transcribe_sys", False))
+    stt_mic_label = str(data.get("stt_mic_label", "MIC"))
+    stt_sys_label = str(data.get("stt_sys_label", "SYS"))
+
+    return Config(
+        data_dir=data_dir,
+        state_dir=state_dir,
+        stt_model=stt_model,
+        stt_language=stt_language,
+        stt_device=stt_device,
+        stt_transcribe_mic=stt_transcribe_mic,
+        stt_transcribe_sys=stt_transcribe_sys,
+        stt_mic_label=stt_mic_label,
+        stt_sys_label=stt_sys_label,
+    )
+
+
+def format_timestamp(seconds: float) -> str:
+    td = timedelta(seconds=seconds)
+    total = int(td.total_seconds())
+    h = total // 3600
+    m = (total % 3600) // 60
+    s = total % 60
+    ms = int(round((seconds - total) * 1000))
+    if ms >= 1000:
+        ms = 0
+        s += 1
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def write_srt(segments, srt_path: Path) -> int:
+    lines: list[str] = []
+    for i, seg in enumerate(segments, 1):
+        text = (seg.text or "").strip()
+        if not text:
+            continue
+        start = format_timestamp(seg.start)
+        end = format_timestamp(seg.end)
+        lines.append(str(i))
+        lines.append(f"{start} --> {end}")
+        lines.append(text)
+        lines.append("")
+    srt_path.write_text("\n".join(lines), encoding="utf-8")
+    return (len(lines) + 1) // 4
+
+
+def transcribe_one(
+    model: WhisperModel,
+    wav: Path,
+    srt: Path,
+    language: str | None,
+    vad: bool,
+) -> str:
+    if not wav.exists():
+        return f"missing: {wav}"
+
+    print(f"→ transcribing {wav.name} ...", flush=True)
+    segments, info = model.transcribe(
+        str(wav),
+        language=language,
+        vad_filter=vad,
+        vad_parameters={"min_silence_duration_ms": 500} if vad else None,
+        beam_size=5,
+    )
+    segments = list(segments)
+
+    n = write_srt(segments, srt)
+    audio_min = getattr(info, "duration", 0) / 60.0 if getattr(info, "duration", 0) else 0
+    return f"wrote {srt.name} ({n} segments, audio ~{audio_min:.1f} min)"
+
+
+def discover_sessions(cfg: Config) -> list[str]:
+    mic = {path.stem for path in (cfg.data_dir / "mic").glob("*.wav")}
+    sys_track = {path.stem for path in (cfg.data_dir / "sys").glob("*.wav")}
+    return sorted(mic & sys_track)
+
+
+def select_session(cfg: Config) -> str | None:
+    sessions = list(reversed(discover_sessions(cfg)))
+    if not sessions:
+        return None
+
+    print("Select a session:")
+    for index, session in enumerate(sessions, 1):
+        display = f"{session[:10]} {session[11:19].replace('-', ':')}"
+        mic_srt = (cfg.data_dir / "mic" / f"{session}.srt").exists()
+        sys_srt = (cfg.data_dir / "sys" / f"{session}.srt").exists()
+        merged = (cfg.data_dir / f"{session}-interview.txt").exists()
+        status = f"mic:{'yes' if mic_srt else 'no'} sys:{'yes' if sys_srt else 'no'} txt:{'yes' if merged else 'no'}"
+        print(f"{index:>3}. {display}  [{status}]")
+
+    try:
+        choice = input("Session number (empty to cancel): ").strip()
+        if not choice:
+            return None
+        return sessions[int(choice) - 1]
+    except (ValueError, IndexError, EOFError):
+        print("error: invalid session number", file=sys.stderr)
+        return None
+
+
+def read_srt(path: Path, label: str) -> list[tuple[str, str, str]]:
+    pattern = re.compile(
+        r"(?m)^\d+\s*\n"
+        r"((\d\d:\d\d:\d\d),\d{3}) --> [^\n]+\n"
+        r"(.*?)(?=\n\s*\n|\Z)",
+        re.DOTALL,
+    )
+    text = path.read_text(encoding="utf-8")
+    return [
+        (match.group(1), label, " ".join(match.group(3).split()))
+        for match in pattern.finditer(text)
+        if match.group(3).strip()
+    ]
+
+
+def merge_transcripts(
+    cfg: Config,
+    session: str,
+    output: Path,
+    mic_label: str,
+    sys_label: str,
+) -> int:
+    rows = read_srt(cfg.data_dir / "mic" / f"{session}.srt", mic_label)
+    rows += read_srt(cfg.data_dir / "sys" / f"{session}.srt", sys_label)
+    rows.sort(key=lambda row: row[0])
+
+    lines = [
+        f"Session: {session}",
+        f"{mic_label} (mic) / {sys_label} (sys)",
+        "",
+    ]
+    for timestamp, label, text in rows:
+        lines.extend((f"[{timestamp}] {label}: {text}", ""))
+    output.write_text("\n".join(lines), encoding="utf-8")
+    return len(rows)
+
+
+def resolve_session(cfg: Config, session_arg: str | None, want_last: bool) -> str | None:
+    if session_arg and session_arg != "last":
+        return session_arg
+
+    # No concrete session id given (bare invocation or --last) → use the most recent.
+    # This makes "recorder-transcribe" (and "recorderctl transcribe") the easy
+    # "default flags + last session" command the user wants.
+    last_json = cfg.state_dir / "last.json"
+    if last_json.exists():
+        try:
+            data = json.loads(last_json.read_text(encoding="utf-8"))
+            sess = data.get("session")
+            if sess:
+                return sess
+        except Exception:
+            pass
+
+    # fallback: newest wav stem in mic/
+    cands = sorted((cfg.data_dir / "mic").glob("*.wav"))
+    if cands:
+        return cands[-1].stem
+
+    return None
+
+
+def main() -> int:
+    cfg = load_config()
+
+    ap = argparse.ArgumentParser(
+        description="Transcribe recorderd wav sessions to .srt next to the audio. "
+                    "Defaults (model/language/device/tracks) come from stt_* keys in config.toml. "
+                    "Bare 'recorder-transcribe' or 'recorderctl transcribe' does last session with config defaults."
+    )
+    ap.add_argument("session", nargs="?", help="session id (e.g. 2026-06-08-18-07-07-9faa) or 'last'")
+    ap.add_argument("--last", action="store_true", help="explicitly transcribe the most recent session (same as bare call)")
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="process every paired mic/sys session; transcribes both tracks and creates merged text files",
+    )
+    ap.add_argument(
+        "--select",
+        "-i",
+        action="store_true",
+        help="interactively select one paired session, transcribe both tracks and create merged text",
+    )
+
+    # defaults will be overridden by values from config
+    ap.add_argument("--model", default=cfg.stt_model, help="faster-whisper model size (tiny/base/small/medium/large-v3)")
+    ap.add_argument("--language", default=cfg.stt_language or "ru", help="language code (ru, en, auto, or omit for auto-detect)")
+    ap.add_argument("--device", default=cfg.stt_device, choices=["cuda", "cpu"])
+    ap.add_argument("--compute-type", default="float16", help="float16 | int8_float16 | int8 | float32")
+    ap.add_argument("--force", action="store_true", help="overwrite existing .srt")
+    ap.add_argument("--no-vad", action="store_true", help="disable VAD (process full audio including silence/music)")
+    ap.add_argument("--mic", action="store_true", help="transcribe mic track")
+    ap.add_argument("--sys", action="store_true", help="transcribe system track")
+    ap.add_argument("--both", action="store_true", help="transcribe both mic and sys")
+    ap.add_argument("--merge", action="store_true", help="create <session>-interview.txt from mic/sys subtitles")
+    ap.add_argument("--mic-label", default=cfg.stt_mic_label, help="speaker label for mic in merged text")
+    ap.add_argument("--sys-label", default=cfg.stt_sys_label, help="speaker label for sys in merged text")
+
+    args = ap.parse_args()
+
+    if (args.all or args.select) and args.session:
+        ap.error("session cannot be used together with --all or --select")
+    if args.all and args.select:
+        ap.error("--all and --select cannot be used together")
+
+    sessions = discover_sessions(cfg) if args.all else []
+    if args.select:
+        selected = select_session(cfg)
+        if selected:
+            sessions = [selected]
+        else:
+            return 0
+    elif not args.all:
+        session = resolve_session(cfg, args.session, args.last)
+        if session:
+            sessions = [session]
+    if not sessions:
+        print("error: no session given and could not determine last session", file=sys.stderr)
+        return 2
+
+    tracks: set[str] = set()
+    if args.all or args.select or args.both:
+        tracks = {"mic", "sys"}
+    else:
+        if args.mic:
+            tracks.add("mic")
+        if args.sys:
+            tracks.add("sys")
+    if not tracks:
+        # fall back to config
+        if cfg.stt_transcribe_mic:
+            tracks.add("mic")
+        if cfg.stt_transcribe_sys:
+            tracks.add("sys")
+    if not tracks:
+        tracks = {"mic"}
+
+    lang = None if (not args.language or args.language.lower() == "auto") else args.language
+
+    print(f"sessions: {len(sessions)}")
+    print(f"tracks: {sorted(tracks)}  model={args.model} lang={args.language or 'auto'} device={args.device}")
+
+    model = None
+    errors = 0
+    for session in sessions:
+        print(f"\nsession: {session}")
+        for track in sorted(tracks):
+            wav = cfg.data_dir / track / f"{session}.wav"
+            srt = wav.with_suffix(".srt")
+            if not wav.exists():
+                print(f"[{track}] missing: {wav}")
+                errors += 1
+                continue
+            if srt.exists() and not args.force:
+                print(f"[{track}] exists: {srt.name}")
+                continue
+            if model is None:
+                print(f"→ loading {args.model} ({args.device}/{args.compute_type}) ...", flush=True)
+                model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
+            res = transcribe_one(model, wav, srt, language=lang, vad=not args.no_vad)
+            print(f"[{track}] {res}")
+
+        if args.all or args.select or args.merge:
+            mic_srt = cfg.data_dir / "mic" / f"{session}.srt"
+            sys_srt = cfg.data_dir / "sys" / f"{session}.srt"
+            merged = cfg.data_dir / f"{session}-interview.txt"
+            if not mic_srt.exists() or not sys_srt.exists():
+                print("[merge] missing mic or sys subtitles")
+                errors += 1
+            elif merged.exists() and not args.force:
+                print(f"[merge] exists: {merged.name}")
+            else:
+                count = merge_transcripts(
+                    cfg,
+                    session,
+                    merged,
+                    mic_label=args.mic_label,
+                    sys_label=args.sys_label,
+                )
+                print(f"[merge] wrote {merged.name} ({count} segments)")
+
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

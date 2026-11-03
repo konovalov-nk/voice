@@ -1,0 +1,1 @@
+{"ts": 1773544842.4299917, "allocated_gb": 14.133, "reserved_gb": 14.426, "max_allocated_gb": 14.417, "models": {"dac": {"param_gb": 1.458, "param_count": 391430530}, "llama": {"param_gb": 8.497, "param_count": 4561852416}}}

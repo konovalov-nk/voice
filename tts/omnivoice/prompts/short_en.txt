@@ -1,0 +1,1 @@
+The factory must grow. This is a short English latency benchmark prompt.

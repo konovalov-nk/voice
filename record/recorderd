@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import re
+import secrets
+import shlex
+import signal
+import socket
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    print("Python 3.11+ is required (tomllib is missing)", file=sys.stderr)
+    sys.exit(1)
+
+
+def run_capture(cmd: list[str]) -> str:
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def list_sources() -> dict[str, str]:
+    out = run_capture(["pactl", "list", "short", "sources"])
+    sources: dict[str, str] = {}
+    if not out:
+        return sources
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        name = parts[1].strip()
+        state = parts[-1].strip()
+        if name:
+            sources[name] = state
+    return sources
+
+
+def env_path(var_name: str, default: str) -> Path:
+    return Path(os.environ.get(var_name, default)).expanduser()
+
+
+@dataclass
+class Config:
+    system_target: str
+    mic_target: str
+    data_dir: Path
+    state_dir: Path
+    runtime_dir: Path
+    latency_ms: int
+
+    # STT settings
+    stt_model: str
+    stt_language: str
+    stt_device: str
+    stt_transcribe_mic: bool
+    stt_transcribe_sys: bool
+    stt_auto_after_stop: bool
+
+
+class RecorderDaemon:
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+        self.sock_path = self.cfg.runtime_dir / "control.sock"
+        self.mic_pid_path = self.cfg.runtime_dir / "recording-mic.pid"
+        self.sys_pid_path = self.cfg.runtime_dir / "recording-sys.pid"
+        self.last_json_path = self.cfg.state_dir / "last.json"
+        self.mic_proc: subprocess.Popen[str] | None = None
+        self.sys_proc: subprocess.Popen[str] | None = None
+        self.current_session: str | None = None
+        self.should_exit = False
+
+    def ensure_dirs(self) -> None:
+        (self.cfg.data_dir / "mic").mkdir(parents=True, exist_ok=True)
+        (self.cfg.data_dir / "sys").mkdir(parents=True, exist_ok=True)
+        self.cfg.state_dir.mkdir(parents=True, exist_ok=True)
+        self.cfg.runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_default_mic(self) -> str:
+        if self.cfg.mic_target:
+            return self.cfg.mic_target
+
+        out = run_capture(["wpctl", "inspect", "@DEFAULT_AUDIO_SOURCE@"]) 
+        if out:
+            m = re.search(r'node.name\s*=\s*"([^"]+)"', out)
+            if m:
+                return m.group(1)
+
+        out = run_capture(["pactl", "get-default-source"])
+        if out:
+            return out.strip()
+
+        raise RuntimeError("could not resolve default microphone target")
+
+    def _resolve_system_target(self) -> str:
+        if self.cfg.system_target:
+            return self.cfg.system_target
+
+        sources = list_sources()
+
+        for name, state in sources.items():
+            if name.endswith(".monitor") and name.startswith("alsa_output.") and state.upper() == "RUNNING":
+                return name
+
+        default_sink = run_capture(["pactl", "get-default-sink"])
+        if default_sink:
+            monitor = f"{default_sink}.monitor"
+            if monitor in sources:
+                return monitor
+
+        out = run_capture(["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"]) 
+        if out:
+            m = re.search(r'node.name\s*=\s*"([^"]+)"', out)
+            if m:
+                monitor = m.group(1) + ".monitor"
+                if monitor in sources:
+                    return monitor
+
+        for name, state in sources.items():
+            if name.endswith(".monitor") and state.upper() == "RUNNING":
+                return name
+
+        for name in sources.keys():
+            if name.endswith(".monitor"):
+                return name
+
+        raise RuntimeError("could not resolve system monitor target")
+
+    def _target_exists(self, target: str) -> bool:
+        return target in list_sources()
+
+    def _is_running(self) -> bool:
+        return bool(
+            self.mic_proc
+            and self.sys_proc
+            and self.mic_proc.poll() is None
+            and self.sys_proc.poll() is None
+        )
+
+    def _write_pid_files(self) -> None:
+        if self.mic_proc:
+            self.mic_pid_path.write_text(f"{self.mic_proc.pid}\n", encoding="utf-8")
+        if self.sys_proc:
+            self.sys_pid_path.write_text(f"{self.sys_proc.pid}\n", encoding="utf-8")
+
+    def _clear_pid_files(self) -> None:
+        for p in (self.mic_pid_path, self.sys_pid_path):
+            if p.exists():
+                p.unlink()
+
+    def _update_last_json(self, status: str, mic_file: Path | None = None, sys_file: Path | None = None) -> None:
+        payload = {
+            "status": status,
+            "session": self.current_session,
+            "mic_pid": self.mic_proc.pid if self.mic_proc and self.mic_proc.poll() is None else None,
+            "sys_pid": self.sys_proc.pid if self.sys_proc and self.sys_proc.poll() is None else None,
+            "mic_file": str(mic_file) if mic_file else None,
+            "sys_file": str(sys_file) if sys_file else None,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        self.last_json_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+
+    def start_recording(self) -> str:
+        if self._is_running():
+            return "already-recording"
+
+        mic_target = self._resolve_default_mic()
+        sys_target = self._resolve_system_target()
+
+        if not self._target_exists(mic_target):
+            raise RuntimeError(f"microphone target not found: {mic_target}")
+        if not self._target_exists(sys_target):
+            raise RuntimeError(f"system target not found: {sys_target}")
+        if mic_target == sys_target:
+            raise RuntimeError(f"mic and system targets are identical: {mic_target}")
+
+        rand_suffix = secrets.token_hex(2)
+        ts = f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}-{rand_suffix}"
+        mic_file = self.cfg.data_dir / "mic" / f"{ts}.wav"
+        sys_file = self.cfg.data_dir / "sys" / f"{ts}.wav"
+
+        base_cmd = ["pw-record", "--latency", str(self.cfg.latency_ms)]
+        mic_cmd = [*base_cmd, "--target", mic_target, str(mic_file)]
+        sys_cmd = [*base_cmd]
+        if sys_target.endswith(".monitor"):
+            sink_target = sys_target[: -len(".monitor")]
+            sys_cmd.extend(["-P", "{ stream.capture.sink=true }"])
+            sys_cmd.extend(["--target", sink_target, str(sys_file)])
+        else:
+            sys_cmd.extend(["--target", sys_target, str(sys_file)])
+
+        print(mic_cmd)
+        print(sys_cmd)
+        self.mic_proc = subprocess.Popen(mic_cmd, text=True)
+        self.sys_proc = subprocess.Popen(sys_cmd, text=True)
+        self.current_session = ts
+
+        self._write_pid_files()
+        self._update_last_json("recording", mic_file=mic_file, sys_file=sys_file)
+        return f"started session={ts} mic_target={shlex.quote(mic_target)} sys_target={shlex.quote(sys_target)}"
+
+    def _stop_proc(self, proc: subprocess.Popen[str] | None) -> None:
+        if proc is None or proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+
+    def stop_recording(self) -> str:
+        if not (self.mic_proc or self.sys_proc):
+            self._clear_pid_files()
+            self._update_last_json("idle")
+            return "not-recording"
+
+        self._stop_proc(self.mic_proc)
+        self._stop_proc(self.sys_proc)
+
+        self.mic_proc = None
+        self.sys_proc = None
+        self._clear_pid_files()
+        self._update_last_json("idle")
+
+        self._maybe_auto_transcribe()
+
+        return "stopped"
+
+    def status(self) -> str:
+        if self._is_running():
+            return f"recording session={self.current_session} mic_pid={self.mic_proc.pid} sys_pid={self.sys_proc.pid}"
+        return "idle"
+
+    def waybar_status(self) -> str:
+        if self._is_running():
+            payload = {
+                "text": "",
+                "class": "recording",
+                "tooltip": f"Recording session: {self.current_session}",
+            }
+        else:
+            payload = {
+                "text": "",
+                "class": "idle",
+                "tooltip": "Not recording",
+            }
+        return json.dumps(payload, ensure_ascii=True)
+
+    def _maybe_auto_transcribe(self) -> None:
+        if not getattr(self.cfg, "stt_auto_after_stop", False):
+            return
+        if not self.current_session:
+            return
+
+        import shutil
+        cmd = shutil.which("recorder-transcribe") or str(Path.home() / ".local/bin/recorder-transcribe")
+        try:
+            subprocess.Popen(
+                [cmd, self.current_session],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            print(f"auto-transcribe started for session {self.current_session}")
+        except Exception as e:
+            print(f"failed to start auto-transcribe: {e}", file=sys.stderr)
+
+    def handle_command(self, cmd: str) -> str:
+        c = cmd.strip().lower()
+        if c == "start":
+            return self.start_recording()
+        if c == "stop":
+            return self.stop_recording()
+        if c == "toggle":
+            return self.stop_recording() if self._is_running() else self.start_recording()
+        if c == "status":
+            return self.status()
+        if c == "waybar":
+            return self.waybar_status()
+        if c == "ping":
+            return "pong"
+        if c in ("quit", "exit"):
+            self.should_exit = True
+            return "bye"
+        return "unknown-command"
+
+    def _install_signal_handlers(self) -> None:
+        def _handler(_signum: int, _frame: object) -> None:
+            self.should_exit = True
+
+        signal.signal(signal.SIGINT, _handler)
+        signal.signal(signal.SIGTERM, _handler)
+
+    def serve(self) -> int:
+        self.ensure_dirs()
+        self._install_signal_handlers()
+
+        if self.sock_path.exists():
+            self.sock_path.unlink()
+
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(self.sock_path))
+        os.chmod(self.sock_path, 0o600)
+        server.listen(8)
+        server.settimeout(1.0)
+
+        try:
+            while not self.should_exit:
+                try:
+                    conn, _ = server.accept()
+                except socket.timeout:
+                    continue
+                with conn:
+                    data = conn.recv(256)
+                    cmd = data.decode("utf-8", errors="replace").strip()
+                    try:
+                        response = self.handle_command(cmd)
+                    except Exception as e:
+                        response = f"error: {e}"
+                    conn.sendall((response + "\n").encode("utf-8"))
+        finally:
+            self.stop_recording()
+            if self.sock_path.exists():
+                self.sock_path.unlink()
+            server.close()
+
+        return 0
+
+
+def load_config() -> Config:
+    default_config_path = env_path("XDG_CONFIG_HOME", "~/.config") / "recorderd" / "config.toml"
+    cfg_path = Path(os.environ.get("RECORDER_CONFIG", str(default_config_path))).expanduser()
+
+    data = {}
+    if cfg_path.exists():
+        data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+
+    data_dir = Path(data.get("data_dir", str(env_path("XDG_DATA_HOME", "~/.local/share") / "recorderd"))).expanduser()
+    state_dir = Path(data.get("state_dir", str(env_path("XDG_STATE_HOME", "~/.local/state") / "recorderd"))).expanduser()
+    runtime_root = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+    runtime_dir = Path(data.get("runtime_dir", str(runtime_root / "recorderd"))).expanduser()
+
+    system_target = os.environ.get("RECORDER_SYS_TARGET", data.get("system_target", "")).strip()
+    mic_target = os.environ.get("RECORDER_MIC_TARGET", data.get("mic_target", "")).strip()
+    latency_ms = int(os.environ.get("RECORDER_LATENCY_MS", str(data.get("latency_ms", 100))))
+
+    # STT
+    stt_model = data.get("stt_model", "medium")
+    stt_language = data.get("stt_language", "ru") or ""
+    stt_device = data.get("stt_device", "cuda")
+    stt_transcribe_mic = bool(data.get("stt_transcribe_mic", True))
+    stt_transcribe_sys = bool(data.get("stt_transcribe_sys", False))
+    stt_auto_after_stop = bool(data.get("stt_auto_after_stop", False))
+
+    return Config(
+        system_target=system_target,
+        mic_target=mic_target,
+        data_dir=data_dir,
+        state_dir=state_dir,
+        runtime_dir=runtime_dir,
+        latency_ms=latency_ms,
+        stt_model=stt_model,
+        stt_language=stt_language,
+        stt_device=stt_device,
+        stt_transcribe_mic=stt_transcribe_mic,
+        stt_transcribe_sys=stt_transcribe_sys,
+        stt_auto_after_stop=stt_auto_after_stop,
+    )
+
+
+def main() -> int:
+    cfg = load_config()
+    daemon = RecorderDaemon(cfg)
+    return daemon.serve()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

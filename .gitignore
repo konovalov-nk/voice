@@ -1,0 +1,116 @@
+# ============================================================================
+#  voice — public research repo
+#  Only first-party code, docs and small text artifacts are tracked.
+#  Model weights, datasets, virtualenvs, upstream clones and any voice
+#  recordings are intentionally excluded.
+# ============================================================================
+
+# ---------------------------------------------------------------- secrets ---
+.env
+.env.*
+*.env
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+.netrc
+
+# ------------------------------------------------------------ python/build --
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+ENV/
+
+# --------------------------------------------------------- editors / system --
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+*.bak
+*.orig
+*.tmp
+*.log
+
+# ------------------------------------------------------------ model weights --
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.gguf
+*.npz
+*.npy
+checkpoints/
+outputs/
+output_*/
+
+# ------------------------------- caches (HF / uv / downloaded models & code) --
+.cache/
+**/.cache/
+
+# ---------------------------- datasets, media, voice samples (size / priv.) --
+# Audio is never committed: it may contain personal voice (biometrics).
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+*.opus
+*.pcm
+*.mp4
+*.mkv
+*.webm
+*.srt
+*.lab
+data/
+white-cat-videos/
+
+# game assets
+*.bsa
+*.esm
+*.fuz
+*.xwm
+
+# ----------------------------------------------------------- third-party ---
+# Clones of upstream projects and nested git repositories. Do not vendor them:
+# fork upstream on GitHub instead.
+tts/MisoTTS/
+tts/experiments/compile-modes/
+tts/experiments/compile-placement/
+tts/experiments/flags/
+tts/omnivoice/repo/
+tts/vibevoice/
+tts/openmoss/MOSS-TTS-Nano-100M/
+stt/asr-codeswitch-bench-5090/sglang-omni-upstream/
+stt/asr-codeswitch-bench-5090/.fish/
+stt/asr-codeswitch-bench-5090/references/
+stt/asr-codeswitch-bench-5090/voices/
+stt/asr-codeswitch-bench-5090/voices_backup/
+datasets/bethesda/BSAFileExtractor/
+
+# ------------------------- Bethesda / Skyrim assets (copyright, 33 GB) ------
+# Keep only the extraction scripts and the plain-text file lists.
+datasets/bethesda/*
+!datasets/bethesda/*.py
+!datasets/bethesda/Makefile
+!datasets/bethesda/*_filelist.txt
+!datasets/bethesda/filelist.txt

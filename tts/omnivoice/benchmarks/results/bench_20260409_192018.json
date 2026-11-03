@@ -1,0 +1,165 @@
+{
+  "summary": {
+    "count": 9,
+    "prompts": 3,
+    "repeats": 3,
+    "warmup_runs": 1,
+    "num_step": 16,
+    "language": null,
+    "ttfb_ms": {
+      "avg": 1051.9749342347495,
+      "p50": 181.00208201212808,
+      "p95": 2834.253875806462,
+      "min": 152.43830002145842,
+      "max": 2851.1586969834752
+    },
+    "ttfa_ms": {
+      "avg": 1051.9749342347495,
+      "p50": 181.00208201212808,
+      "p95": 2834.253875806462,
+      "min": 152.43830002145842,
+      "max": 2851.1586969834752
+    },
+    "total_ms": {
+      "avg": 1052.9014722301831,
+      "p50": 181.15667201345786,
+      "p95": 2836.828647204675
+    },
+    "server_gen_ms": {
+      "avg": 1046.7311111111112,
+      "p50": 179.29,
+      "p95": 2823.322
+    },
+    "audio_duration_s": {
+      "avg": 40.13111111111111,
+      "p50": 4.32,
+      "p95": 111.88
+    },
+    "rtf": {
+      "avg": 0.034236408926595796,
+      "p50": 0.0355162037037037,
+      "p95": 0.04457860347985348,
+      "min": 0.024964515552377553,
+      "max": 0.0458389423076923
+    }
+  },
+  "runs": [
+    {
+      "prompt_file": "prompts/factorio_mix_long.txt",
+      "run_index": 1,
+      "text_chars": 1826,
+      "num_step": 16,
+      "ttfb_ms": 2851.1586969834752,
+      "ttfa_ms": 2851.1586969834752,
+      "total_ms": 2853.8672080030665,
+      "server_gen_ms": 2840.59,
+      "audio_duration_s": 111.88,
+      "audio_bytes": 5370284,
+      "rtf": 0.025389613872005723
+    },
+    {
+      "prompt_file": "prompts/factorio_mix_long.txt",
+      "run_index": 2,
+      "text_chars": 1826,
+      "num_step": 16,
+      "ttfb_ms": 2808.896644040942,
+      "ttfa_ms": 2808.896644040942,
+      "total_ms": 2811.2708060070872,
+      "server_gen_ms": 2797.42,
+      "audio_duration_s": 111.88,
+      "audio_bytes": 5370284,
+      "rtf": 0.025003754022166612
+    },
+    {
+      "prompt_file": "prompts/factorio_mix_long.txt",
+      "run_index": 3,
+      "text_chars": 1826,
+      "num_step": 16,
+      "ttfb_ms": 2804.02827297803,
+      "ttfa_ms": 2804.02827297803,
+      "total_ms": 2806.4450550009497,
+      "server_gen_ms": 2793.03,
+      "audio_duration_s": 111.88,
+      "audio_bytes": 5370284,
+      "rtf": 0.024964515552377553
+    },
+    {
+      "prompt_file": "prompts/short_en.txt",
+      "run_index": 1,
+      "text_chars": 72,
+      "num_step": 16,
+      "ttfb_ms": 152.43830002145842,
+      "ttfa_ms": 152.43830002145842,
+      "total_ms": 152.64269901672378,
+      "server_gen_ms": 150.6,
+      "audio_duration_s": 4.22,
+      "audio_bytes": 202604,
+      "rtf": 0.03568720379146919
+    },
+    {
+      "prompt_file": "prompts/short_en.txt",
+      "run_index": 2,
+      "text_chars": 72,
+      "num_step": 16,
+      "ttfb_ms": 192.28167401161045,
+      "ttfa_ms": 192.28167401161045,
+      "total_ms": 192.41427298402414,
+      "server_gen_ms": 190.69,
+      "audio_duration_s": 4.16,
+      "audio_bytes": 199724,
+      "rtf": 0.0458389423076923
+    },
+    {
+      "prompt_file": "prompts/short_en.txt",
+      "run_index": 3,
+      "text_chars": 72,
+      "num_step": 16,
+      "ttfb_ms": 181.00208201212808,
+      "ttfa_ms": 181.00208201212808,
+      "total_ms": 181.15667201345786,
+      "server_gen_ms": 179.29,
+      "audio_duration_s": 4.2,
+      "audio_bytes": 201644,
+      "rtf": 0.04268809523809524
+    },
+    {
+      "prompt_file": "prompts/short_ru.txt",
+      "run_index": 1,
+      "text_chars": 66,
+      "num_step": 16,
+      "ttfb_ms": 155.3404900478199,
+      "ttfa_ms": 155.3404900478199,
+      "total_ms": 155.43983899988234,
+      "server_gen_ms": 153.43,
+      "audio_duration_s": 4.32,
+      "audio_bytes": 207404,
+      "rtf": 0.0355162037037037
+    },
+    {
+      "prompt_file": "prompts/short_ru.txt",
+      "run_index": 2,
+      "text_chars": 66,
+      "num_step": 16,
+      "ttfb_ms": 169.124161999207,
+      "ttfa_ms": 169.124161999207,
+      "total_ms": 169.27962203044444,
+      "server_gen_ms": 167.28,
+      "audio_duration_s": 4.32,
+      "audio_bytes": 207404,
+      "rtf": 0.03872222222222222
+    },
+    {
+      "prompt_file": "prompts/short_ru.txt",
+      "run_index": 3,
+      "text_chars": 66,
+      "num_step": 16,
+      "ttfb_ms": 153.5040860180743,
+      "ttfa_ms": 153.5040860180743,
+      "total_ms": 153.59707601601258,
+      "server_gen_ms": 148.25,
+      "audio_duration_s": 4.32,
+      "audio_bytes": 207404,
+      "rtf": 0.03431712962962963
+    }
+  ]
+}

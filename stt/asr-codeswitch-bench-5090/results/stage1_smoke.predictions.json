@@ -1,0 +1,390 @@
+{
+  "config": {
+    "model_id": "whisper_large_v3_turbo_fw",
+    "manifest_path": "data/manifests/smoke_stage1_from_make.jsonl",
+    "output_path": "results/stage1_smoke.predictions.json",
+    "streaming": true
+  },
+  "results": [
+    {
+      "id": "en_pl_high_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_pl_high_short_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_pl_low_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_pl_low_short_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_pl_medium_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_high_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_high_short_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_low_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_low_short_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_medium_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_pl_high_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_pl_high_short_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_pl_low_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_pl_low_short_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "en_ru_pl_medium_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "ru_pl_high_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "ru_pl_high_short_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "ru_pl_low_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "ru_pl_low_short_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    },
+    {
+      "id": "ru_pl_medium_medium_0001_clean",
+      "model_id": "whisper_large_v3_turbo_fw",
+      "hypothesis_text": "",
+      "segments": [],
+      "latency": {
+        "ttfp_ms": null,
+        "ttsc_ms": null,
+        "finalization_lag_ms": null,
+        "wall_ms": 0.0
+      },
+      "resources": {
+        "peak_vram_mb": null,
+        "avg_gpu_util": null
+      },
+      "notes": [
+        "TODO: connect backend adapter"
+      ]
+    }
+  ]
+}

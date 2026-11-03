@@ -1,0 +1,8 @@
+# Start recording
+bind = SUPER, F9, exec, recorderctl start
+
+# Stop recording
+bind = SUPER, F10, exec, recorderctl stop
+
+# Toggle recording
+bind = SUPER, F11, exec, recorderctl toggle

@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: Fish Speech
+    orgId: 1
+    folder: Fish Speech
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

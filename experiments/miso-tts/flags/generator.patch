@@ -1,0 +1,21 @@
+diff --git a/generator.py b/generator.py
+index 5fe187c..22ca4ed 100644
+--- a/generator.py
++++ b/generator.py
+@@ -59,7 +59,6 @@ class Generator:
+         mimi.set_num_codebooks(self._model.config.audio_num_codebooks)
+         self._audio_tokenizer = mimi
+ 
+-        self._watermarker = load_watermarker(device=device)
+ 
+         self.sample_rate = mimi.sample_rate
+         self.device = device
+@@ -167,8 +166,6 @@ class Generator:
+ 
+         # This applies an imperceptible watermark to identify audio as AI-generated.
+         # If using Miso TTS in another application, use your own private key and keep it secret.
+-        audio, wm_sample_rate = watermark(self._watermarker, audio, self.sample_rate, MISO_TTS_WATERMARK)
+-        audio = torchaudio.functional.resample(audio, orig_freq=wm_sample_rate, new_freq=self.sample_rate)
+ 
+         return audio
+ 

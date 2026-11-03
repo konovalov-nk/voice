@@ -1,0 +1,18 @@
+system_target = "alsa_output.usb-BEHRINGER_UMC404HD_192k-00.pro-output-0.monitor"
+mic_target = ""
+latency_ms = 100
+
+# Optional overrides:
+# data_dir = "~/.local/share/recorderd"
+# state_dir = "~/.local/state/recorderd"
+# runtime_dir = "/run/user/1000/recorderd"
+
+# STT / transcription settings (used by recorder-transcribe and auto-after-stop)
+stt_model = "medium"
+stt_language = "ru"        # "ru", "en", "auto", or empty for auto-detect
+stt_device = "cuda"
+stt_transcribe_mic = true
+stt_transcribe_sys = false
+stt_mic_label = "MIC"
+stt_sys_label = "SYS"
+stt_auto_after_stop = false   # if true, recorderd will automatically run transcription after stop
